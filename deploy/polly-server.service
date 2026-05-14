@@ -1,0 +1,19 @@
+[Unit]
+Description=Polly FastAPI server
+# 4 workers + Redis 共享限速窗口；少了哪个都会跑成多个独立桶。
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=polly
+WorkingDirectory=/srv/polly-server
+EnvironmentFile=/srv/polly-server/.env
+ExecStart=/srv/polly-server/.venv/bin/uvicorn app.main:app \
+  --host 127.0.0.1 --port 8000 --workers 4 \
+  --proxy-headers --forwarded-allow-ips="127.0.0.1"
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

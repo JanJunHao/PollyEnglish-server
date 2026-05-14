@@ -1,0 +1,47 @@
+# Caddy 自动 Let's Encrypt + HTTP/2 + WebSocket。
+# 把 api.polly.app 指向部署机的公网 IP，启动 caddy 就完事。
+#
+# 用法：
+#   sudo caddy run --config /etc/caddy/Caddyfile
+#   或 brew services start caddy
+#
+# 反代到本机 8000（uvicorn）。生产建议用 --workers 多进程跑 uvicorn，
+# 限速若切到 Redis 后端，Caddy 可以 layer-7 再叠一层基础限速。
+
+{
+    # 全局：邮箱用于 Let's Encrypt 到期提醒
+    email ops@polly.app
+}
+
+api.polly.app {
+    encode zstd gzip
+    log {
+        output stdout
+        format json
+    }
+
+    # 安全头
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options    "nosniff"
+        Referrer-Policy           "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    # 上线后 /static/* 通常走 R2 自定义域名（cdn.polly.app），这里反代仅做 dev 兜底。
+    # 真要在 api.polly.app 同域提供资源时再开。
+    # handle /static/* {
+    #     reverse_proxy 127.0.0.1:8000
+    # }
+
+    reverse_proxy 127.0.0.1:8000 {
+        # 把客户端 IP 转给 FastAPI，让自研限速器 _client_ip() 正确解析
+        header_up X-Forwarded-For   {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up Host              {host}
+    }
+}
+
+# CDN 子域（如果走 R2 自定义域名而不是 R2 自己的 public.r2.dev）：
+# 直接在 Cloudflare 后台配 R2 → custom domain → cdn.polly.app
+# 不需要 Caddy 转发。

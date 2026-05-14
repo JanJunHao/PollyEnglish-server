@@ -1,0 +1,16 @@
+.env
+*.db
+*.db-journal
+*.db.bak*
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+cdn-staging/
+
+# pip install -e 产物
+build/
+*.egg-info/
