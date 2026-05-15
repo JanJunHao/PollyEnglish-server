@@ -13,14 +13,23 @@
         ↓ yt-dlp 二次验证（API 偶尔会标错）
 [license 双重确认]
         ↓ 拉 vtt 字幕（manual 优先 / auto 兜底）
-[字幕 + 全文]
+        ↓ yt-dlp 拉 mp4 到 cdn-staging/videos/ （默认开，--no-download-video 跳过）
+[字幕 + 全文 + 本地视频文件]
         ↓ CEFR 5 维度评分（词汇 0.4 + Flesch + FK + 句长 + 难词）
-[manifest.json: 视频元信息 + 字幕路径 + CEFR + WPM]
-        ↓ to_polly_fetch.py 过滤（默认要 manual 字幕、license 验证通过）
+[manifest.json: 视频元信息 + 字幕路径 + video_path + CEFR + WPM]
+        ↓ to_polly_fetch.py 过滤（默认要 manual 字幕、word_count ≥ 500）
+        ↓ video_path 有 → play_mode=native + video_url=<本地 URL>
+        ↓ video_path 缺   → play_mode=youtube_embed（向后兼容）
 [Polly fetch JSON]
         ↓ scripts/ingest.py --from-fetch
-[contents 表（subtitle_url 必填 / cefr_level 喂自 CEFR 评分）]
+[contents 表（subtitle_url 必填 / cefr_level 喂自 CEFR 评分 / play_mode + video_url）]
 ```
+
+## 为什么要本地化视频（不直接走 YouTube embed）
+
+YouTube iframe player 在中国大陆访问 `googlevideo.com` 视频流被 GFW 阻断（错误码 152）。
+也就是说不带代理就放不了视频。所以服务端用 yt-dlp 预下载 mp4 到 `cdn-staging/videos/`，iOS 端走
+AVPlayer 拉局域网 / CDN 上的本地 mp4——既绕过 GFW，也避开 App Store 审核对外部嵌入 YouTube 的红线。
 
 ## 安装
 
@@ -46,6 +55,7 @@ pip install -e ".[cc-pipeline]"
 export YOUTUBE_API_KEY="..."
 
 # 2. 抓 VOA Learning English 整频道（最值钱的源，自带 Level 分级）
+#    默认顺手下载 480p mp4 到 cdn-staging/videos/。带 --no-download-video 可跳过。
 python -m scripts.cc_pipeline.yt_cc_scraper \
     --channel UCKyTokYo0nK2OA-az-sDijA \
     --max-results 200 \
@@ -53,6 +63,7 @@ python -m scripts.cc_pipeline.yt_cc_scraper \
 
 # 3. 转成 ingest.py 能吃的 fetch JSON
 #    默认过滤：license_verified=True + has_subtitle=True + subtitle_source=manual
+#    manifest 里 video_path 有的条目，自动输出 play_mode=native + video_url
 python -m scripts.cc_pipeline.to_polly_fetch \
     ./cdn-staging/cc-content/voa/manifest.json \
     --out ./cdn-staging/voa-fetch.json \
@@ -63,6 +74,19 @@ python -m scripts.ingest \
     --from-fetch ./cdn-staging/voa-fetch.json \
     --limit 100
 ```
+
+### 已有 manifest 但视频还没下：回填
+
+如果你之前跑 scraper 时带了 `--no-download-video`、或者老 manifest 里没 `video_path` 字段，
+单独跑下载脚本回填即可（幂等，DB 已 native + 文件已在的会自动跳过）：
+
+```bash
+python -m scripts.cc_pipeline.download_videos \
+    --manifest ./cdn-staging/cc-content/voa/manifest.json \
+    --quality 480
+```
+
+完成后 contents 表对应行的 `play_mode` 已直接切到 `native`、`video_url` 指向本地。
 
 ## 单独跑 CEFR 评分
 

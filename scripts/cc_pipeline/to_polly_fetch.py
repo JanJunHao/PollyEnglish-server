@@ -7,6 +7,8 @@
   cefr_estimate     → categories_hint 同形（让 ingest 拿到难度，写入 contents.cefr_level）
   has_english_subtitle + subtitle_source → 过滤条件
   description       → description
+  video_path 存在 → play_mode='native' + video_url=<storage URL>
+  video_path 缺失 → play_mode='youtube_embed'（向后兼容，但会 warn）
 
 过滤策略：默认只保留
   - license_verified == True（yt-dlp 二次验证通过）
@@ -77,13 +79,28 @@ def convert(
                 _reject(f"cefr_out_of_range({cefr})")
                 continue
 
+        # 视频本地化优先：manifest 里 video_path 存在 + 文件真的在磁盘上 → native；否则回退 youtube_embed
+        video_path = v.get("video_path") or ""
+        play_mode = "youtube_embed"
+        video_url: str | None = None
+        if video_path:
+            from app.storage import get_storage
+            from pathlib import Path as _Path
+            repo_root = _Path(__file__).resolve().parent.parent.parent
+            if (repo_root / "cdn-staging" / video_path).exists():
+                play_mode = "native"
+                video_url = get_storage().url(video_path)
+            else:
+                print(f"⚠️  {v['youtube_id']}: manifest 标了 video_path={video_path} 但文件不存在，回退 youtube_embed")
+
         out.append({
             "video_id": v["youtube_id"],
             "title": v["title"],
             "author": v.get("channel_title") or "",
             "source": v.get("channel_title") or "",
             "duration_seconds": int(v.get("duration_seconds") or 0),
-            "play_mode": "youtube_embed",  # CC 视频走 YouTube iFrame，合规且免 host
+            "play_mode": play_mode,
+            "video_url": video_url,
             "thumbnail_url": _thumbnail_url(v["youtube_id"]),
             "description": v.get("description") or "",
             # 把 CEFR 喂给 ingest——ingest 已经有 cefr_level 列，scripts 端默认从这里取

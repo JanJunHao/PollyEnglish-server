@@ -73,6 +73,7 @@ class VideoMetadata:
     composite_score: Optional[float]
     fetched_at: str
     attribution: str                # 法律要求的署名文本
+    video_path: Optional[str] = None  # 相对 cdn-staging 的本地视频路径，例如 "videos/{id}.mp4"
 
 
 class YouTubeCCScraper:
@@ -342,8 +343,14 @@ class YouTubeCCScraper:
         video_ids: List[str],
         verify_with_ytdlp: bool = True,
         grade_difficulty: bool = True,
+        download_video: bool = True,
+        video_quality: int = 480,
     ) -> List[VideoMetadata]:
-        """完整流水线：详情 → license 验证 → 字幕 → 难度评估 → 入库。"""
+        """完整流水线：详情 → license 验证 → 字幕 → 难度评估 → (可选)视频下载 → 入库。
+
+        download_video=True 时把 mp4 拉到 polly-server/cdn-staging/videos/{id}.mp4，
+        VideoMetadata.video_path 记录相对路径，给下游 to_polly_fetch 转 play_mode=native 用。
+        """
         grader = None
         if grade_difficulty:
             try:
@@ -369,6 +376,18 @@ class YouTubeCCScraper:
                     continue
 
             sub_data = self.download_subtitles(vid)
+
+            video_path: Optional[str] = None
+            if download_video:
+                # 全局 videos/ 目录而非 per-channel，对齐 polly-server/cdn-staging/videos/ 的 /static 挂载
+                from .download_videos import download_video as _dl
+                videos_root = Path(__file__).resolve().parent.parent.parent / "cdn-staging" / "videos"
+                videos_root.mkdir(parents=True, exist_ok=True)
+                local = _dl(vid, videos_root, quality=video_quality)
+                if local:
+                    video_path = f"videos/{vid}.mp4"
+                else:
+                    logger.warning(f"{vid}: 视频下载失败（manifest video_path 留空，下游将走 youtube_embed）")
 
             wpm = None
             cefr = None
@@ -403,6 +422,7 @@ class YouTubeCCScraper:
                 composite_score=composite,
                 fetched_at=datetime.utcnow().isoformat() + 'Z',
                 attribution=self._build_attribution(video),
+                video_path=video_path,
             )
 
             self._save_metadata(meta)
@@ -439,6 +459,10 @@ def main():
                         help='跳过 yt-dlp 二次验证（更快但可能采到误标）')
     parser.add_argument('--no-grade', action='store_true',
                         help='跳过 CEFR 难度评估')
+    parser.add_argument('--no-download-video', action='store_true',
+                        help='跳过视频下载（manifest 只含字幕/元数据，下游走 youtube_embed）')
+    parser.add_argument('--video-quality', type=int, default=480,
+                        help='视频最高高度像素，默认 480')
     parser.add_argument('--published-after', help='ISO 8601 起始时间')
     args = parser.parse_args()
 
@@ -470,6 +494,8 @@ def main():
         ids,
         verify_with_ytdlp=not args.no_verify,
         grade_difficulty=not args.no_grade,
+        download_video=not args.no_download_video,
+        video_quality=args.video_quality,
     )
 
     logger.info(f"完成：成功处理 {len(results)} 个 CC 视频")

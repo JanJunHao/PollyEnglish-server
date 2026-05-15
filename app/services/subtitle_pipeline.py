@@ -176,8 +176,10 @@ _TIME_RE = re.compile(r"(\d+):(\d+):(\d+)\.(\d+)\s*-->\s*(\d+):(\d+):(\d+)\.(\d+
 
 
 def _parse_youtube_vtt(path: Path) -> list[dict]:
-    """简化版：每个 cue 输出一个 segment（句级）。字级解析留给 Polly/scripts/vtt_to_subtitles.py。
-    本服务端 MVP 用句级精度（YT 自动字幕本身句级就够看）。
+    """每个 cue 一个 segment，按空格切分填 words。
+
+    YT VTT 没有字级时间戳，按句内均匀分布估算（点击词查 AI 不需要精确字时间）。
+    iOS SubtitleListView 渲染英文行靠的就是 words 数组，留空会全空白。
     """
     text = path.read_text(encoding="utf-8")
     segments: list[dict] = []
@@ -196,7 +198,17 @@ def _parse_youtube_vtt(path: Path) -> list[dict]:
         body = re.sub(r"<[^>]+>", "", body).strip()
         if not body:
             continue
-        segments.append({"id": seg_id, "start": start, "end": end, "text": body, "words": []})
+        tokens = body.split()
+        dur = max(end - start, 0.01)
+        words = [
+            {
+                "w": tok,
+                "s": round(start + (i / len(tokens)) * dur, 3),
+                "e": round(start + ((i + 1) / len(tokens)) * dur, 3),
+            }
+            for i, tok in enumerate(tokens)
+        ]
+        segments.append({"id": seg_id, "start": start, "end": end, "text": body, "words": words})
         seg_id += 1
     return segments
 
