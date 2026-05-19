@@ -16,12 +16,13 @@ class ContentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    kind: str  # video / article / audio——Q2 统一内容模型
     title: str
     author: str
     source: str
-    duration_seconds: int
+    duration_seconds: int | None
     cefr_level: str
-    play_mode: str
+    play_mode: str | None
     video_url: str | None
     youtube_id: str | None
     thumbnail_url: str
@@ -29,6 +30,7 @@ class ContentOut(BaseModel):
     vocabulary_url: str | None
     explanation_url: str | None
     categories: list[str]
+    topics: list[str]  # 受控题材标签（app/taxonomy.py）
     category_color_hex: int
     is_recommended: bool
     updated_at: datetime
@@ -38,6 +40,93 @@ class ContentsLatestOut(BaseModel):
     server_time: datetime
     version: int
     contents: list[ContentOut]
+
+
+# ---------- articles（Q4 图文线）----------
+# 图文形态对外读取 schema。与 ContentOut（视频）平行，字段为图文精读量身设计。
+
+
+class ArticleSegment(BaseModel):
+    """图文切段后的一句——对应视频字幕的 segment，精读交互（点词/讲解）以此为单位。"""
+
+    id: int
+    text: str
+    translation: str = ""
+    paragraph: int = 0  # 句子所属自然段序号
+
+
+class ArticleOut(BaseModel):
+    """单篇图文内容。聚合 contents 基表 + article_details 明细。"""
+
+    id: str
+    kind: str  # 恒为 'article'
+    title: str
+    author: str
+    source: str
+    cefr_level: str
+    categories: list[str]  # 首页分类（外刊 tab 用 'foreign'）
+    topics: list[str]
+    # CC BY-SA 等许可要求保留的署名（图文必带）
+    attribution: str | None
+    thumbnail_url: str
+    # 图文正文与切段
+    body: str
+    paragraphs: list[ArticleSegment]
+    image_urls: list[str]
+    word_count: int
+    reading_time_seconds: int | None
+    updated_at: datetime
+
+
+class ArticlesLatestOut(BaseModel):
+    server_time: datetime
+    version: int
+    articles: list[ArticleOut]
+
+
+# ---------- quizzes（Q5 数据复用「① 派生新内容」，阶段 3）----------
+# 从已有内容（explanations 的 key_vocab / grammar_point）派生的测验题。
+
+
+class QuizOut(BaseModel):
+    """单道派生测验题。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    content_id: str
+    segment_id: int | None  # 关联句 id；None = 内容级综合题
+    kind: str  # vocab_choice / grammar_choice / cloze / comprehension
+    question: str
+    options: list[str]
+    answer_index: int  # 正确选项在 options 中的下标
+    rationale: str  # 答案解析
+
+
+class ContentQuizzesOut(BaseModel):
+    content_id: str
+    count: int
+    quizzes: list[QuizOut]
+
+
+# ---------- word examples（Q5 数据复用「③ 内容自我增强」，阶段 3）----------
+# 词→内容反向索引：按词返回多个真实语境例句。
+
+
+class WordExample(BaseModel):
+    """某个词的一条真实语境例句。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    content_id: str
+    segment_id: int
+    sentence: str
+
+
+class WordExamplesOut(BaseModel):
+    word: str  # 查询的 lemma（小写）
+    count: int
+    examples: list[WordExample]
 
 
 # ---------- ai/explain ----------

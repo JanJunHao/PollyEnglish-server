@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -11,7 +11,10 @@ def _utcnow() -> datetime:
 
 
 class Content(Base):
-    """视频元信息。schema 与文档 06.3 / DemoVideo.swift 对齐，兼容 SQLite + PostgreSQL。"""
+    """内容元信息（统一基表）。Q2 统一内容模型：基表存所有形态共享的学习元数据，
+    形态特有字段拆到明细表（视频字段暂留基表，图文见 ArticleDetails）。
+    schema 兼容 SQLite + PostgreSQL。
+    """
 
     __tablename__ = "contents"
 
@@ -19,11 +22,27 @@ class Content(Base):
     title: Mapped[str] = mapped_column(String(512))
     author: Mapped[str] = mapped_column(String(256))
     source: Mapped[str] = mapped_column(String(64))
-    duration_seconds: Mapped[int] = mapped_column(Integer)
     cefr_level: Mapped[str] = mapped_column(String(8))
 
+    # ── Q2 共享元数据 ──
+    # 内容形态（modality）：video / article / audio。入库时确定，驱动按形态分流。
+    kind: Mapped[str] = mapped_column(
+        String(16), default="video", server_default="video", index=True
+    )
+    # 内容语言（ISO 639-1）。英语学习内容默认 en。
+    language: Mapped[str] = mapped_column(String(16), default="en", server_default="en")
+    # 受控题材标签（app/taxonomy.py 的 topic id 列表）。与自由 categories 并存，逐步替代。
+    topics: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    # Q1 质量打分器产出：L1 音频可教性分 + 综合质量分。未评分为 None。
+    audio_teachability: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # CC 内容署名（CC BY-SA 等许可要求保留来源与作者）。
+    attribution: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+
+    # ── 视频形态字段（kind='video' 时有效；article 行为 NULL）──
     # native = AVPlayer 流式播放 CDN mp4；youtube_embed = WKWebView iFrame（TED 合规走这条）
-    play_mode: Mapped[str] = mapped_column(String(16), default="native")
+    duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    play_mode: Mapped[str | None] = mapped_column(String(16), default="native", nullable=True)
     video_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     youtube_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     thumbnail_url: Mapped[str] = mapped_column(String(1024))
@@ -43,6 +62,30 @@ class Content(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, index=True
     )
+
+
+class ArticleDetails(Base):
+    """图文内容的形态明细。与 contents 基表 1:1——content_id 既是主键也是外键。
+    Q2 统一内容模型：基表（Content）存共享元数据，本表存图文特有字段。
+    contents 行的 kind='article' 时才有对应明细行。
+    """
+
+    __tablename__ = "article_details"
+
+    content_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("contents.id", ondelete="CASCADE"), primary_key=True
+    )
+    # 文章全文（原始正文）
+    body: Mapped[str] = mapped_column(Text)
+    # 切段后的段落/句子，精读交互用——对应视频的字幕 segments。
+    # 结构：[{"id": 0, "text": "...", "translation": "..."}]
+    paragraphs: Mapped[list] = mapped_column(JSON, default=list)
+    # 配图 URL 列表（自托管 / CC 图源）
+    image_urls: Mapped[list] = mapped_column(JSON, default=list)
+    word_count: Mapped[int] = mapped_column(Integer, default=0)
+    # 估算阅读时长（秒）；首页与视频 duration_seconds 对位展示
+    reading_time_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class Explanation(Base):
@@ -247,3 +290,48 @@ class ChatSession(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
+
+
+# ====== 阶段 3 数据复用 / 数据飞轮 ======
+
+
+class Quiz(Base):
+    """从已有内容派生的测验题。Q5 数据复用「① 派生新内容」。
+    基于 `Explanation` 的 key_vocab / grammar_point 等结构化标注自动出题，
+    一次性预生成 + 缓存——内容固定，题目永久复用。
+    """
+
+    __tablename__ = "quizzes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    content_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("contents.id", ondelete="CASCADE"), index=True
+    )
+    # 关联句 id（视频字幕句 / 图文段落句）；None = 内容级综合题
+    segment_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 题型：vocab_choice 词义选择 / grammar_choice 语法选择 / cloze 完形填空 / comprehension 理解题
+    kind: Mapped[str] = mapped_column(String(32), index=True)
+    question: Mapped[str] = mapped_column(String(2048))
+    options: Mapped[list] = mapped_column(JSON, default=list)  # 选项文本列表
+    answer_index: Mapped[int] = mapped_column(Integer)  # 正确选项在 options 中的下标
+    rationale: Mapped[str] = mapped_column(String(2048))  # 答案解析
+    source_model: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class WordOccurrence(Base):
+    """词 → 内容反向索引。Q5 数据复用「③ 内容自我增强」。
+    记录某个词（lemma）出现在哪条内容的哪一句，使查词卡能给出多个真实语境例句。
+    派生/缓存表，可随时按全部内容重建。
+    """
+
+    __tablename__ = "word_occurrences"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    word: Mapped[str] = mapped_column(String(64), index=True)  # 小写 lemma
+    content_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("contents.id", ondelete="CASCADE"), index=True
+    )
+    segment_id: Mapped[int] = mapped_column(Integer)
+    sentence: Mapped[str] = mapped_column(String(2048))  # 该词出现的真实句子
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

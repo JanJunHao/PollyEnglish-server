@@ -1,0 +1,86 @@
+[
+  {
+    "status": "ok",
+    "item": "nasa-science",
+    "connector": "nasa",
+    "candidates": 3,
+    "approved": 1,
+    "ingested": 0,
+    "review_queue": 2,
+    "discarded": 0,
+    "ingest_ok": true,
+    "dry_run": true,
+    "decisions": [
+      {
+        "title": "NASA ScienceCasts: Thinking Inside the Box",
+        "compliance": "allow",
+        "compliance_reason": "来源是美国政府出版物，属于公有领域，合规零风险。",
+        "quality": "review",
+        "quality_score": 0.6,
+        "quality_reason": "内容简短且信息量有限，难以判断其适合性和学习价值。",
+        "outcome": "review_queue"
+      },
+      {
+        "title": "ScienceCasts: Space Gardening",
+        "compliance": "allow",
+        "compliance_reason": "来源是美国政府出版物，属于公有领域。",
+        "quality": "pass",
+        "quality_score": 0.9,
+        "quality_reason": "内容清晰，涉及科学研究，适合学习者精读和跟读。",
+        "outcome": "approved"
+      },
+      {
+        "title": "NASA ScienceCasts: The CIPHER Project",
+        "compliance": "allow",
+        "compliance_reason": "来源是美国政府出版物，属于公有领域，合规零风险。",
+        "quality": "review",
+        "quality_score": 0.6,
+        "quality_reason": "内容涉及NASA的科学项目，但信息较为简略，适合进一步扩展和详细解说。",
+        "outcome": "review_queue"
+      }
+    ],
+    "logged_at": "2026-05-18T03:45:46+00:00"
+  },
+  {
+    "status": "ok",
+    "item": "nasa-science",
+    "connector": "nasa",
+    "candidates": 3,
+    "approved": 1,
+    "ingested": 1,
+    "review_queue": 2,
+    "discarded": 0,
+    "ingest_ok": true,
+    "dry_run": false,
+    "decisions": [
+      {
+        "title": "NASA ScienceCasts: Thinking Inside the Box",
+        "compliance": "allow",
+        "compliance_reason": "来源是美国政府出版物，属于公有领域，合规零风险。",
+        "quality": "review",
+        "quality_score": 0.6,
+        "quality_reason": "内容简短且主题不够明确，难以判断其适合性。",
+        "outcome": "review_queue"
+      },
+      {
+        "title": "ScienceCasts: Space Gardening",
+        "compliance": "allow",
+        "compliance_reason": "来源是美国政府出版物，属于公有领域，合规零风险。",
+        "quality": "pass",
+        "quality_score": 0.9,
+        "quality_reason": "内容清晰，涉及科学研究，适合学习者精读和跟读。",
+        "outcome": "approved"
+      },
+      {
+        "title": "NASA ScienceCasts: The CIPHER Project",
+        "compliance": "allow",
+        "compliance_reason": "来源是美国政府出版物，属于公有领域，合规零风险。",
+        "quality": "review",
+        "quality_score": 0.6,
+        "quality_reason": "内容涉及NASA的科学项目，但信息较为简略，适合学习者的具体性和深度不足。",
+        "outcome": "review_queue"
+      }
+    ],
+    "logged_at": "2026-05-18T03:46:24+00:00"
+  }
+]

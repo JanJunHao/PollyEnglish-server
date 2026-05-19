@@ -5,7 +5,18 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import ai, chat, contents, health, pronunciation, subtitles, translations
+from app.api import (
+    ai,
+    articles,
+    chat,
+    contents,
+    health,
+    pronunciation,
+    quizzes,
+    subtitles,
+    translations,
+    words,
+)
 from app.config import get_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -27,11 +38,15 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(contents.router)
+app.include_router(articles.router)
 app.include_router(ai.router)
 app.include_router(subtitles.router)
 app.include_router(translations.router)
 app.include_router(pronunciation.router)
 app.include_router(chat.router)
+# 阶段 3 数据飞轮：派生测验题 + 词语真实例句反向索引
+app.include_router(quizzes.router)
+app.include_router(words.router)
 
 # 本地 CDN staging：ingest 把 Polly/Resources 下的 mp4 / 字幕 / 字典等
 # 拷贝到 cdn-staging/，挂到 /static/，让 iOS 模拟器/真机能直接拉。

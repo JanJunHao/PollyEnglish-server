@@ -38,7 +38,10 @@ def latest(
     # 硬性 gate：subtitle_url 缺失的视频永远不进首页。
     # Polly 的产品是「精读」，没字幕等于没产品价值；流水线层面也对应
     # scripts/ingest.py 的 status='review_pending' 降级逻辑。
+    # kind='video' gate：Q2 统一内容模型后，contents 基表会同时容纳图文（article）。
+    # /contents/latest 是 iOS 视频首页，只返回视频形态；图文走后续独立端点。
     stmt = select(Content).where(
+        Content.kind == "video",
         Content.status == "published",
         Content.subtitle_url.isnot(None),
         Content.subtitle_url != "",

@@ -1,0 +1,60 @@
+[
+  {
+    "id": "nasa-science",
+    "connector": "nasa",
+    "args": {
+      "--query": "ScienceCasts,explained",
+      "--limit": "3"
+    },
+    "priority": 20,
+    "status": "done",
+    "note": "NASA 科普短片（公有领域，最安全的起步源）",
+    "last_run": "2026-05-18T03:46:24+00:00",
+    "last_result": {
+      "candidates": 3,
+      "approved": 1,
+      "ingested": 1,
+      "review_queue": 2,
+      "discarded": 0,
+      "ingest_ok": true,
+      "dry_run": false
+    }
+  },
+  {
+    "id": "voa-daily",
+    "connector": "voa",
+    "args": {
+      "--limit": "3"
+    },
+    "priority": 18,
+    "status": "pending",
+    "note": "VOA Learning English 文章（公有领域，自带分级）",
+    "last_run": null,
+    "last_result": null
+  },
+  {
+    "id": "mit-ocw-lectures",
+    "connector": "mit_ocw",
+    "args": {
+      "--limit": "3"
+    },
+    "priority": 12,
+    "status": "pending",
+    "note": "MIT OCW 讲座（CC BY-NC-SA）",
+    "last_run": null,
+    "last_result": null
+  },
+  {
+    "id": "ia-academic-films",
+    "connector": "internet_archive",
+    "args": {
+      "--collection": "academic_films",
+      "--limit": "3"
+    },
+    "priority": 6,
+    "status": "pending",
+    "note": "Internet Archive 学术影片（版权混杂，需 LLM 合规复核）",
+    "last_run": null,
+    "last_result": null
+  }
+]

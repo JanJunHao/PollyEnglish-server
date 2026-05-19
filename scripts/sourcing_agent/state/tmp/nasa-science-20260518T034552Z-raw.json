@@ -1,0 +1,47 @@
+[
+  {
+    "video_id": "nasa-282-thinkinginsidebox",
+    "title": "NASA ScienceCasts: Thinking Inside the Box",
+    "author": "HQ",
+    "source": "NASA",
+    "duration_seconds": 250,
+    "thumbnail_url": "https://images-assets.nasa.gov/video/282_ThinkingInsideBox/282_ThinkingInsideBox~thumb.jpg",
+    "description": "Gloveboxes on the ISS allow for experiments on materials that you wouldn't want escaping into the station's enclosed space.",
+    "video_url": "https://images-assets.nasa.gov/video/282_ThinkingInsideBox/282_ThinkingInsideBox~mobile.mp4",
+    "caption_url": "https://images-assets.nasa.gov/video/282_ThinkingInsideBox/282_ThinkingInsideBox.srt",
+    "categories_hint": [
+      "discovery"
+    ],
+    "play_mode": "native"
+  },
+  {
+    "video_id": "nasa-248-spacegardening",
+    "title": "ScienceCasts: Space Gardening",
+    "author": "HQ",
+    "source": "NASA",
+    "duration_seconds": 267,
+    "thumbnail_url": "https://images-assets.nasa.gov/video/248_SpaceGardening/248_SpaceGardening~thumb.jpg",
+    "description": "Scientists have been studying plant growth on the International Space Station. The results could help boost the productivity of both extraterrestrial and earthly gardens.",
+    "video_url": "https://images-assets.nasa.gov/video/248_SpaceGardening/248_SpaceGardening~mobile.mp4",
+    "caption_url": "https://images-assets.nasa.gov/video/248_SpaceGardening/248_SpaceGardening.srt",
+    "categories_hint": [
+      "discovery"
+    ],
+    "play_mode": "native"
+  },
+  {
+    "video_id": "nasa-319-cipher",
+    "title": "NASA ScienceCasts: The CIPHER Project",
+    "author": "HQ",
+    "source": "NASA",
+    "duration_seconds": 205,
+    "thumbnail_url": "https://images-assets.nasa.gov/video/319_CIPHER/319_CIPHER~thumb_1.jpg",
+    "description": "NASA’s new Human Research Program project, CIPHER, integrates 14 multi-disciplinary investigations and examines multiple astronauts across different mission durations over the course of many years.  CIPHER: www.nasa.gov/CHIPER",
+    "video_url": "https://images-assets.nasa.gov/video/319_CIPHER/319_CIPHER~mobile.mp4",
+    "caption_url": "https://images-assets.nasa.gov/video/319_CIPHER/319_CIPHER.srt",
+    "categories_hint": [
+      "discovery"
+    ],
+    "play_mode": "native"
+  }
+]

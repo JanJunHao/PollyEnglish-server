@@ -21,15 +21,25 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
+
+import httpx
 
 from app.api.ai import classify_one
 from app.db import SessionLocal
 from app.db_bootstrap import ensure_schema_dev
 from app.models import Content, SubtitleJob
-from app.services.subtitle_pipeline import enqueue_job, run_job
+from app.services.quality_scorer import (
+    QualityResult,
+    load_subtitle_doc,
+    score_from_subtitle_doc,
+)
+from app.services.subtitle_pipeline import distribute_words, enqueue_job, run_job
 from app.storage import Storage, get_storage, guess_content_type
 
 
@@ -94,6 +104,52 @@ def _put_if_exists(storage: Storage, src: Path, remote_key: str) -> str | None:
     if not src.exists():
         return None
     return storage.put(src, remote_key, content_type=guess_content_type(src))
+
+
+# fetcher 给的 thumbnail_url 常指向这些外部图床；ingest 时下载转存到自己 storage，
+# 避免 App 端依赖第三方 CDN（国内访问 i.ytimg.com 不稳，封面会大面积加载失败）。
+_EXTERNAL_THUMB_HOSTS = {"i.ytimg.com", "img.youtube.com", "i9.ytimg.com"}
+
+
+def _download_bytes(url: str) -> bytes | None:
+    try:
+        resp = httpx.get(url, timeout=15, follow_redirects=True)
+    except httpx.HTTPError:
+        return None
+    if resp.status_code == 200 and resp.content:
+        return resp.content
+    return None
+
+
+def mirror_thumbnail(storage: Storage, thumbnail_url: str, video_id: str) -> str:
+    """把外部图床的缩略图下载并转存到自己 storage，返回自托管 URL。
+
+    幂等：空值 / bundle:// 占位 / 已自托管（host 不在外部图床名单）原样返回。
+    下载失败时降级返回原 URL，不阻塞 ingest。
+    YouTube 的 maxresdefault 对部分视频不存在（404），自动回退 hqdefault。
+    """
+    if not thumbnail_url or thumbnail_url.startswith("bundle://"):
+        return thumbnail_url
+    if urlparse(thumbnail_url).netloc.lower() not in _EXTERNAL_THUMB_HOSTS:
+        return thumbnail_url
+
+    data = _download_bytes(thumbnail_url)
+    if data is None and "maxresdefault" in thumbnail_url:
+        data = _download_bytes(thumbnail_url.replace("maxresdefault", "hqdefault"))
+    if data is None:
+        print(f"[mirror_thumbnail] download failed, keeping remote URL: {thumbnail_url}",
+              file=sys.stderr)
+        return thumbnail_url
+
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            tmp.write(data)
+            tmp_path = Path(tmp.name)
+        return storage.put(tmp_path, f"thumbnails/{video_id}.jpg", content_type="image/jpeg")
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
 
 
 def ingest_one(slug: str, paths: IngestPaths, storage: Storage) -> dict:
@@ -207,8 +263,227 @@ async def _subtitle_with_fallback(video_id: str) -> tuple[str | None, str | None
         return None, j.error_message or f"job ended in status {j.status}"
 
 
+# ---- native 源自带字幕轨（NASA media library 的 .vtt/.srt）→ Polly 字幕 JSON ----
+
+_CAPTION_TS_RE = re.compile(
+    r"(\d+):(\d+):(\d+)[.,](\d+)\s*-->\s*(\d+):(\d+):(\d+)[.,](\d+)"
+)
+
+
+def _parse_caption(text: str) -> list[dict]:
+    """解析 VTT 或 SRT 文本 → Polly 字幕 segments。
+
+    两格式统一处理：按空行切 cue，定位含 '-->' 的时间行，正文取其后续行
+    （VTT 的 cue 标识行 / SRT 的序号行都在时间行之前，自然被丢掉）。
+    没有字级时间戳，按词数在句内均匀估算——点词查义不需要精确字时间。
+    """
+    segments: list[dict] = []
+    seg_id = 0
+    for block in text.replace("\r\n", "\n").split("\n\n"):
+        lines = [ln for ln in block.strip().split("\n") if ln.strip()]
+        ts_idx = next((i for i, ln in enumerate(lines) if "-->" in ln), None)
+        if ts_idx is None:
+            continue
+        m = _CAPTION_TS_RE.search(lines[ts_idx])
+        if not m:
+            continue
+        sh, sm, ss, sms, eh, em, es, ems = (int(x) for x in m.groups())
+        start = sh * 3600 + sm * 60 + ss + sms / 1000
+        end = eh * 3600 + em * 60 + es + ems / 1000
+        body = " ".join(lines[ts_idx + 1:])
+        body = re.sub(r"<[^>]+>", "", body).strip()
+        if not body:
+            continue
+        words = distribute_words(body.split(), start, end)
+        segments.append({"id": seg_id, "start": start, "end": end,
+                          "text": body, "words": words})
+        seg_id += 1
+    return segments
+
+
+# ---- 自带逐字稿（无时间戳）→ Polly 字幕 JSON ----
+# VOA Learning English 官网连接器（fetch_voa_learning_english.py）产出的条目带
+# transcript 字段（逐字稿段落字符串列表，无时间轴）。这里按句切分、按词数在
+# 整段时长内均匀估时间——精读交互（点词、长按句子）不需要精确字时间戳。
+
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"'])")
+
+
+def _transcript_to_segments(transcript: list[str], duration_seconds: int) -> list[dict]:
+    """逐字稿段落列表 → Polly 字幕 segments（按句切，按词数均匀分配时间轴）。"""
+    # 先把段落拆成句子（精读以句为单位更自然）
+    sentences: list[str] = []
+    for para in transcript:
+        para = (para or "").strip()
+        if not para:
+            continue
+        parts = [s.strip() for s in _SENTENCE_SPLIT_RE.split(para) if s.strip()]
+        sentences.extend(parts or [para])
+    if not sentences:
+        return []
+
+    # 按各句词数占比分配时间窗口
+    word_counts = [max(len(s.split()), 1) for s in sentences]
+    total_words = sum(word_counts)
+    dur = max(float(duration_seconds or 0), 1.0)
+
+    segments: list[dict] = []
+    cursor = 0.0
+    for seg_id, (text, wc) in enumerate(zip(sentences, word_counts)):
+        span = dur * (wc / total_words)
+        start, end = cursor, cursor + span
+        cursor = end
+        tokens = text.split()
+        seg_dur = max(end - start, 0.01)
+        words = [
+            {
+                "w": tok,
+                "s": round(start + (i / len(tokens)) * seg_dur, 3),
+                "e": round(start + ((i + 1) / len(tokens)) * seg_dur, 3),
+            }
+            for i, tok in enumerate(tokens)
+        ]
+        segments.append({"id": seg_id, "start": round(start, 3),
+                          "end": round(end, 3), "text": text, "words": words})
+    return segments
+
+
+async def _build_subtitle_from_transcript(item: dict) -> tuple[str | None, str | None]:
+    """带 transcript 字段的源（VOA 官网）：逐字稿 → 解析 → 翻译 → 写 subtitle JSON。
+
+    返回 (subtitle_url, error)。VOA 逐字稿是官方编写的，subtitle_source 记 manual。
+    翻译 best-effort——失败只留英文，不阻塞入库。
+    """
+    video_id = item["video_id"]
+    transcript = item.get("transcript") or []
+    if not transcript:
+        return None, "no transcript"
+    try:
+        segments = _transcript_to_segments(transcript, item.get("duration_seconds") or 0)
+        if not segments:
+            return None, "transcript parsed to 0 segments"
+
+        try:
+            from app.services.translation_pipeline import translate_segments
+            segments = await translate_segments(segments, "zh-CN")
+        except Exception as e:  # noqa: BLE001
+            print(f"[{video_id}] 字幕翻译失败，仅英文: {e}", file=sys.stderr)
+
+        doc = {"video_id": video_id, "subtitle_source": "manual", "segments": segments}
+        tmp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w", suffix=".json", delete=False, encoding="utf-8"
+            ) as tmp:
+                json.dump(doc, tmp, ensure_ascii=False, indent=2)
+                tmp_path = Path(tmp.name)
+            url = get_storage().put(
+                tmp_path, f"subtitles/{video_id}.json",
+                content_type=guess_content_type(tmp_path),
+            )
+        finally:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+        return url, None
+    except Exception as exc:  # noqa: BLE001
+        return None, str(exc)[:200]
+
+
+async def _build_native_asr_subtitle(item: dict) -> tuple[str | None, str | None, dict | None]:
+    """native 源无字幕轨时的 Whisper 兜底：转录 video_url 媒体 → 写 subtitle JSON。
+
+    用于 Internet Archive 等无 transcript、无 caption_url 的公有领域老片——
+    原本这类条目会因没字幕沉底。这里下载 native 媒体走 Whisper 转录兜底。
+
+    返回 (subtitle_url, error, asr_meta)。Whisper 转录的 subtitle_source 记 whisper，
+    asr_meta 含每段置信度指标，供 Q1 打分器 L1 复用。
+    翻译 best-effort——失败只留英文，不阻塞入库。
+    """
+    video_id = item["video_id"]
+    media_url = item.get("video_url")
+    if not media_url:
+        return None, "no video_url for ASR fallback", None
+    try:
+        from app.services.subtitle_pipeline import transcribe_native_media
+        segments, asr_meta = await transcribe_native_media(media_url)
+        if not segments:
+            return None, "Whisper 转录产出 0 segments", None
+
+        try:
+            from app.services.translation_pipeline import translate_segments
+            segments = await translate_segments(segments, "zh-CN")
+        except Exception as e:  # noqa: BLE001
+            print(f"[{video_id}] 字幕翻译失败，仅英文: {e}", file=sys.stderr)
+
+        # Whisper 转录质量同 auto 档，subtitle_source 记 whisper
+        doc = {"video_id": video_id, "subtitle_source": "whisper",
+               "segments": segments, "asr_meta": asr_meta}
+        tmp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w", suffix=".json", delete=False, encoding="utf-8"
+            ) as tmp:
+                json.dump(doc, tmp, ensure_ascii=False, indent=2)
+                tmp_path = Path(tmp.name)
+            url = get_storage().put(
+                tmp_path, f"subtitles/{video_id}.json",
+                content_type=guess_content_type(tmp_path),
+            )
+        finally:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+        return url, None, asr_meta
+    except Exception as exc:  # noqa: BLE001
+        return None, str(exc)[:200], None
+
+
+async def _build_native_subtitle(item: dict) -> tuple[str | None, str | None]:
+    """native 源（NASA）：下载自带字幕轨 → 解析 → 翻译 → 写 subtitles/{id}.json。
+
+    返回 (subtitle_url, error)。NASA 字幕是人工编写的，subtitle_source 记 manual。
+    翻译 best-effort——失败只留英文，不阻塞入库。
+    """
+    video_id = item["video_id"]
+    caption_url = item.get("caption_url")
+    if not caption_url:
+        return None, "no caption_url"
+    try:
+        data = _download_bytes(caption_url)
+        if not data:
+            return None, "caption download failed"
+        segments = _parse_caption(data.decode("utf-8", errors="replace"))
+        if not segments:
+            return None, "caption parsed to 0 segments"
+
+        try:
+            from app.services.translation_pipeline import translate_segments
+            segments = await translate_segments(segments, "zh-CN")
+        except Exception as e:  # noqa: BLE001
+            print(f"[{video_id}] 字幕翻译失败，仅英文: {e}", file=sys.stderr)
+
+        doc = {"video_id": video_id, "subtitle_source": "manual", "segments": segments}
+        tmp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w", suffix=".json", delete=False, encoding="utf-8"
+            ) as tmp:
+                json.dump(doc, tmp, ensure_ascii=False, indent=2)
+                tmp_path = Path(tmp.name)
+            url = get_storage().put(
+                tmp_path, f"subtitles/{video_id}.json",
+                content_type=guess_content_type(tmp_path),
+            )
+        finally:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+        return url, None
+    except Exception as exc:  # noqa: BLE001
+        return None, str(exc)[:200]
+
+
 def _upsert_from_fetch(item: dict, *, categories: list[str], confidence: float,
-                       subtitle_url: str | None, status: str) -> str:
+                       subtitle_url: str | None, status: str,
+                       quality: QualityResult | None = None) -> str:
     """upsert contents 行。返回 'inserted' / 'updated'。
 
     兼容两种 fetch 输出：
@@ -218,6 +493,11 @@ def _upsert_from_fetch(item: dict, *, categories: list[str], confidence: float,
     video_id = item["video_id"]
     play_mode = item.get("play_mode", "youtube_embed")
     is_youtube = play_mode == "youtube_embed"
+
+    # 缩略图转存到自己 storage，App 端不再依赖第三方图床
+    thumbnail_url = mirror_thumbnail(
+        get_storage(), item.get("thumbnail_url") or "", video_id
+    )
 
     # 分类兜底：fetcher 显式给 categories_hint 优先；否则 AI 分类结果；都没 → ['ted'] / ['discovery']
     hint = item.get("categories_hint", [])
@@ -238,7 +518,7 @@ def _upsert_from_fetch(item: dict, *, categories: list[str], confidence: float,
         "play_mode": play_mode,
         "video_url": None if is_youtube else item.get("video_url"),
         "youtube_id": video_id if is_youtube else None,
-        "thumbnail_url": item.get("thumbnail_url") or "",
+        "thumbnail_url": thumbnail_url,
         "subtitle_url": subtitle_url,
         "vocabulary_url": None,
         "explanation_url": None,
@@ -248,6 +528,10 @@ def _upsert_from_fetch(item: dict, *, categories: list[str], confidence: float,
         "classify_confidence": confidence,
         "status": status,
     }
+    # Q1 质量打分器产出：L1 音频可教性 + 综合质量分写入对应列
+    if quality is not None:
+        payload["audio_teachability"] = quality.audio_teachability
+        payload["quality_score"] = quality.quality_score
 
     with SessionLocal() as db:
         existing = db.get(Content, video_id)
@@ -275,12 +559,29 @@ async def ingest_from_fetch(items: list[dict], *, do_subtitles: bool) -> None:
         async with classify_sem:
             categories, confidence, cls_err = await _classify_with_fallback(item)
 
-        # 2) subtitle（可关 + native 视频暂跳过 yt-dlp 流程；将来 NASA / IA 字幕另搞）
+        # 2) subtitle
+        #    - fetch 给了 transcript（VOA 官网 / MIT OCW）→ 逐字稿转 Polly schema
+        #      （与 play_mode 无关：OCW 视频走 youtube_embed 但自带逐字稿）
+        #    - native 且 fetch 给了 caption_url（NASA）→ 字幕轨转 schema
+        #    - native 且无 caption_url（IA 无字幕老片）→ Whisper 兜底转录 video_url 媒体
+        #    - 非 native 且无 transcript（YouTube）→ 走 yt-dlp tier1/tier3 流水线
         sub_url: str | None = None
         sub_err: str | None = None
-        if do_subtitles and not is_native:
-            async with subtitle_sem:
-                sub_url, sub_err = await _subtitle_with_fallback(item["video_id"])
+        if do_subtitles:
+            if item.get("transcript"):
+                async with subtitle_sem:
+                    sub_url, sub_err = await _build_subtitle_from_transcript(item)
+            elif is_native and item.get("caption_url"):
+                async with subtitle_sem:
+                    sub_url, sub_err = await _build_native_subtitle(item)
+            elif is_native:
+                # native 源无 transcript、无 caption_url（如 IA 无字幕公有领域老片）：
+                # 走 Whisper 兜底转录 native 媒体，避免无字幕沉底。
+                async with subtitle_sem:
+                    sub_url, sub_err, _ = await _build_native_asr_subtitle(item)
+            else:
+                async with subtitle_sem:
+                    sub_url, sub_err = await _subtitle_with_fallback(item["video_id"])
 
         # 3) status 策略：
         #    - classify 成功 + confidence >= 阈值 → published
@@ -289,7 +590,8 @@ async def ingest_from_fetch(items: list[dict], *, do_subtitles: bool) -> None:
         #    - classify 失败 + 来源不明 → review_pending
         source = item.get("source", "")
         known_trusted = (
-            source in {"TED", "TED-Ed", "NASA", "Internet Archive"}
+            source in {"TED", "TED-Ed", "NASA", "Internet Archive",
+                       "VOA Learning English", "MIT OpenCourseWare"}
             or "TED" in source
             or "NASA" in source.upper()
         )
@@ -310,6 +612,32 @@ async def ingest_from_fetch(items: list[dict], *, do_subtitles: bool) -> None:
         if not sub_url:
             status = "review_pending"
 
+        # 3.5) Q1 质量打分器（L0/L1/L2）
+        #    在 status 已由分类逻辑初定后再跑——打分器只会"降级"不会"升级"：
+        #    分类说 published、但质量档 review/reject → 取更保守的 status；
+        #    分类已 review_pending 的不会被打分器抬回 published。
+        #    无字幕时跳过（已是 review_pending，且 L2 无 segments 评不出）。
+        quality: QualityResult | None = None
+        if sub_url:
+            try:
+                sub_doc = load_subtitle_doc(sub_url)
+                if sub_doc:
+                    quality = score_from_subtitle_doc(
+                        sub_doc,
+                        duration_seconds=item.get("duration_seconds"),
+                        source=item.get("source"),
+                        kind=item.get("kind", "video"),
+                    )
+            except Exception as exc:  # noqa: BLE001 — 打分失败不阻塞入库
+                print(f"[{item['video_id']}] 质量打分失败: {exc}", file=sys.stderr)
+
+        if quality is not None:
+            q_status = quality.status  # published / review_pending
+            # 取更保守者：published(0) < review_pending(1)，质量档只下不上
+            rank = {"published": 0, "review_pending": 1}
+            if rank.get(q_status, 1) > rank.get(status, 1):
+                status = q_status
+
         # 4) upsert（同步）
         action = _upsert_from_fetch(
             item,
@@ -317,6 +645,7 @@ async def ingest_from_fetch(items: list[dict], *, do_subtitles: bool) -> None:
             confidence=confidence,
             subtitle_url=sub_url,
             status=status,
+            quality=quality,
         )
 
         return {
@@ -327,6 +656,11 @@ async def ingest_from_fetch(items: list[dict], *, do_subtitles: bool) -> None:
             "confidence": round(confidence, 2),
             "categories": categories,
             "subtitle": "ok" if sub_url else f"miss({sub_err[:30] if sub_err else 'skipped'})",
+            "quality": (
+                f"{quality.tier}/{quality.quality_score}"
+                f"(L1={quality.audio_teachability},L2={quality.teaching_value})"
+                if quality else "n/a"
+            ),
             "classify_err": cls_err,
         }
 
@@ -338,9 +672,10 @@ async def ingest_from_fetch(items: list[dict], *, do_subtitles: bool) -> None:
     total = len(results)
     published = sum(1 for r in results if r["status"] == "published")
     sub_ok = sum(1 for r in results if r["subtitle"] == "ok")
+    scored = sum(1 for r in results if r.get("quality", "n/a") != "n/a")
     print(f"\n--- 汇总 ---", file=sys.stderr)
     print(f"总计 {total}  published {published}  review_pending {total - published}  "
-          f"subtitle_ok {sub_ok}/{total}", file=sys.stderr)
+          f"subtitle_ok {sub_ok}/{total}  quality_scored {scored}/{total}", file=sys.stderr)
 
 
 def main() -> None:

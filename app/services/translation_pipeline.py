@@ -52,7 +52,7 @@ async def run_job(job_id: str) -> None:
             if not segments:
                 raise RuntimeError("source subtitle has no segments")
 
-            translated = await _translate_segments(segments, job.target_lang)
+            translated = await translate_segments(segments, job.target_lang)
 
             # 写回输出 JSON
             storage = get_storage()
@@ -91,8 +91,12 @@ async def _download_subtitle(url: str) -> dict:
         return r.json()
 
 
-async def _translate_segments(segments: list[dict], target_lang: str) -> list[dict]:
-    """分批 gpt-4o 翻译。保留原 segment 全部字段，只填 translation。"""
+async def translate_segments(
+    segments: list[dict], target_lang: str, model: str = "gpt-4o-mini"
+) -> list[dict]:
+    """分批翻译。保留原 segment 全部字段，只填 translation。
+    被翻译 job 流程和 subtitle_pipeline 字幕生成两处复用。
+    默认 gpt-4o-mini——字幕翻译够用，比 gpt-4o 便宜约 15 倍。"""
     settings = get_settings()
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY not configured (翻译不可用)")
@@ -111,7 +115,7 @@ async def _translate_segments(segments: list[dict], target_lang: str) -> list[di
 
     async def _translate_batch(batch: list[dict]) -> list[dict]:
         async with sem:
-            return await _gpt_translate(client, batch, target_lang)
+            return await _gpt_translate(client, batch, target_lang, model)
 
     results = await asyncio.gather(*[_translate_batch(b) for b in batches])
     flat: list[dict] = []
@@ -130,8 +134,10 @@ _LANG_NAMES = {
 }
 
 
-async def _gpt_translate(client, batch: list[dict], target_lang: str) -> list[dict]:
-    """单批 gpt-4o 翻译。返回填好 translation 的 segments 列表。
+async def _gpt_translate(
+    client, batch: list[dict], target_lang: str, model: str = "gpt-4o-mini"
+) -> list[dict]:
+    """单批翻译。返回填好 translation 的 segments 列表。
 
     用 JSON mode + 序列化 id→text 的小字典请模型逐条翻，错位风险最小。
     """
@@ -146,17 +152,25 @@ async def _gpt_translate(client, batch: list[dict], target_lang: str) -> list[di
     )
     user = json.dumps(payload, ensure_ascii=False)
 
-    resp = await client.chat.completions.create(
-        model="gpt-4o",
-        response_format={"type": "json_object"},
-        temperature=0.2,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-    )
-    raw = resp.choices[0].message.content or "{}"
-    translations: dict[str, str] = json.loads(raw)
+    # 模型偶发返回截断 / 不合法 JSON。重试一次；仍失败就让这一批译文留空，
+    # 不抛错——否则 asyncio.gather 会让整份字幕的翻译全部失败。
+    translations: dict[str, str] = {}
+    for attempt in range(2):
+        resp = await client.chat.completions.create(
+            model=model,
+            response_format={"type": "json_object"},
+            temperature=0.2,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+        raw = resp.choices[0].message.content or "{}"
+        try:
+            translations = json.loads(raw)
+            break
+        except json.JSONDecodeError as e:
+            log.warning("批次翻译 JSON 解析失败（第 %d 次）: %s", attempt + 1, e)
 
     out: list[dict] = []
     for seg in batch:

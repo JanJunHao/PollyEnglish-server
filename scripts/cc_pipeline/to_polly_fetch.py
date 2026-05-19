@@ -59,12 +59,18 @@ def convert(
     # 500 词阈值：30 分钟按 100 wpm 即使只录满 5 分钟也有 500 词，足够保守。
     MIN_WORD_COUNT = 500
 
+    # 时长上限：超 30 分钟的长视频先不收（学习者难一次跟完，也吃带宽）。
+    MAX_DURATION_SECONDS = 30 * 60
+
     for v in items_in:
         if not v.get("license_verified"):
             _reject("license_not_verified")
             continue
         if not v.get("has_english_subtitle"):
             _reject("no_subtitle")
+            continue
+        if (v.get("duration_seconds") or 0) > MAX_DURATION_SECONDS:
+            _reject("too_long(>30min)")
             continue
         if v.get("subtitle_source") == "auto" and not allow_auto_subtitle:
             _reject("auto_subtitle_only")

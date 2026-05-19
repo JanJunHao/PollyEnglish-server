@@ -115,6 +115,7 @@ _CONTENT_TYPES = {
     ".jpeg": "image/jpeg",
     ".png": "image/png",
     ".webp": "image/webp",
+    ".svg": "image/svg+xml",
 }
 
 

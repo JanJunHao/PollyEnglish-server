@@ -1,0 +1,17 @@
+[
+  {
+    "video_id": "nasa-248-spacegardening",
+    "title": "ScienceCasts: Space Gardening",
+    "author": "HQ",
+    "source": "NASA",
+    "duration_seconds": 267,
+    "thumbnail_url": "https://images-assets.nasa.gov/video/248_SpaceGardening/248_SpaceGardening~thumb.jpg",
+    "description": "Scientists have been studying plant growth on the International Space Station. The results could help boost the productivity of both extraterrestrial and earthly gardens.",
+    "video_url": "https://images-assets.nasa.gov/video/248_SpaceGardening/248_SpaceGardening~mobile.mp4",
+    "caption_url": "https://images-assets.nasa.gov/video/248_SpaceGardening/248_SpaceGardening.srt",
+    "categories_hint": [
+      "discovery"
+    ],
+    "play_mode": "native"
+  }
+]

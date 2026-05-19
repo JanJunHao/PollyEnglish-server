@@ -1,0 +1,98 @@
+[
+  {
+    "candidate": {
+      "video_id": "nasa-282-thinkinginsidebox",
+      "title": "NASA ScienceCasts: Thinking Inside the Box",
+      "author": "HQ",
+      "source": "NASA",
+      "duration_seconds": 250,
+      "thumbnail_url": "https://images-assets.nasa.gov/video/282_ThinkingInsideBox/282_ThinkingInsideBox~thumb.jpg",
+      "description": "Gloveboxes on the ISS allow for experiments on materials that you wouldn't want escaping into the station's enclosed space.",
+      "video_url": "https://images-assets.nasa.gov/video/282_ThinkingInsideBox/282_ThinkingInsideBox~mobile.mp4",
+      "caption_url": "https://images-assets.nasa.gov/video/282_ThinkingInsideBox/282_ThinkingInsideBox.srt",
+      "categories_hint": [
+        "discovery"
+      ],
+      "play_mode": "native"
+    },
+    "connector": "nasa",
+    "stage": "quality",
+    "reasons": [
+      "内容简短且信息量有限，难以判断其适合性和学习价值。"
+    ],
+    "queued_at": "2026-05-18T03:45:38+00:00",
+    "review_status": "pending"
+  },
+  {
+    "candidate": {
+      "video_id": "nasa-319-cipher",
+      "title": "NASA ScienceCasts: The CIPHER Project",
+      "author": "HQ",
+      "source": "NASA",
+      "duration_seconds": 205,
+      "thumbnail_url": "https://images-assets.nasa.gov/video/319_CIPHER/319_CIPHER~thumb_1.jpg",
+      "description": "NASA’s new Human Research Program project, CIPHER, integrates 14 multi-disciplinary investigations and examines multiple astronauts across different mission durations over the course of many years.  CIPHER: www.nasa.gov/CHIPER",
+      "video_url": "https://images-assets.nasa.gov/video/319_CIPHER/319_CIPHER~mobile.mp4",
+      "caption_url": "https://images-assets.nasa.gov/video/319_CIPHER/319_CIPHER.srt",
+      "categories_hint": [
+        "discovery"
+      ],
+      "play_mode": "native"
+    },
+    "connector": "nasa",
+    "stage": "quality",
+    "reasons": [
+      "内容涉及NASA的科学项目，但信息较为简略，适合进一步扩展和详细解说。"
+    ],
+    "queued_at": "2026-05-18T03:45:46+00:00",
+    "review_status": "pending"
+  },
+  {
+    "candidate": {
+      "video_id": "nasa-282-thinkinginsidebox",
+      "title": "NASA ScienceCasts: Thinking Inside the Box",
+      "author": "HQ",
+      "source": "NASA",
+      "duration_seconds": 250,
+      "thumbnail_url": "https://images-assets.nasa.gov/video/282_ThinkingInsideBox/282_ThinkingInsideBox~thumb.jpg",
+      "description": "Gloveboxes on the ISS allow for experiments on materials that you wouldn't want escaping into the station's enclosed space.",
+      "video_url": "https://images-assets.nasa.gov/video/282_ThinkingInsideBox/282_ThinkingInsideBox~mobile.mp4",
+      "caption_url": "https://images-assets.nasa.gov/video/282_ThinkingInsideBox/282_ThinkingInsideBox.srt",
+      "categories_hint": [
+        "discovery"
+      ],
+      "play_mode": "native"
+    },
+    "connector": "nasa",
+    "stage": "quality",
+    "reasons": [
+      "内容简短且主题不够明确，难以判断其适合性。"
+    ],
+    "queued_at": "2026-05-18T03:46:02+00:00",
+    "review_status": "pending"
+  },
+  {
+    "candidate": {
+      "video_id": "nasa-319-cipher",
+      "title": "NASA ScienceCasts: The CIPHER Project",
+      "author": "HQ",
+      "source": "NASA",
+      "duration_seconds": 205,
+      "thumbnail_url": "https://images-assets.nasa.gov/video/319_CIPHER/319_CIPHER~thumb_1.jpg",
+      "description": "NASA’s new Human Research Program project, CIPHER, integrates 14 multi-disciplinary investigations and examines multiple astronauts across different mission durations over the course of many years.  CIPHER: www.nasa.gov/CHIPER",
+      "video_url": "https://images-assets.nasa.gov/video/319_CIPHER/319_CIPHER~mobile.mp4",
+      "caption_url": "https://images-assets.nasa.gov/video/319_CIPHER/319_CIPHER.srt",
+      "categories_hint": [
+        "discovery"
+      ],
+      "play_mode": "native"
+    },
+    "connector": "nasa",
+    "stage": "quality",
+    "reasons": [
+      "内容涉及NASA的科学项目，但信息较为简略，适合学习者的具体性和深度不足。"
+    ],
+    "queued_at": "2026-05-18T03:46:12+00:00",
+    "review_status": "pending"
+  }
+]
